@@ -153,7 +153,7 @@ func getEnv() *currentEnv {
 }
 
 func testAccPreCheck(t *testing.T) {
-	hasFileCfg := (os.Getenv("KUBE_CTX_AUTH_INFO") != "" && os.Getenv("KUBE_CTX_CLUSTER") != "")
+	hasFileCfg := ((os.Getenv("KUBE_CTX_AUTH_INFO") != "" && os.Getenv("KUBE_CTX_CLUSTER") != "") || os.Getenv("KUBE_CTX") != "")
 	hasStaticCfg := (os.Getenv("KUBE_HOST") != "" &&
 		os.Getenv("KUBE_USER") != "" &&
 		os.Getenv("KUBE_PASSWORD") != "" &&
