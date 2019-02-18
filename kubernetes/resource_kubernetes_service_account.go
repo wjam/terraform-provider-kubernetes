@@ -22,6 +22,34 @@ func resourceKubernetesServiceAccount() *schema.Resource {
 		Update: resourceKubernetesServiceAccountUpdate,
 		Delete: resourceKubernetesServiceAccountDelete,
 
+		// This only allows the importing of ServiceAccounts which have a single service account token secret on them
+		//    The reasoning for this is due to the complexity around calculating the `default_secret_name` if there are
+		//    multiple service account tokens attached to service account.
+		Importer: &schema.ResourceImporter{
+			State: func(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+				conn := meta.(*kubernetes.Clientset)
+
+				namespace, name, err := idParts(d.Id())
+				if err != nil {
+					return nil, err
+				}
+
+				sa, err := conn.CoreV1().ServiceAccounts(namespace).Get(name, metav1.GetOptions{})
+				if err != nil {
+					return nil, err
+				}
+				defaultSecret, err := findDefaultServiceAccount(namespace, name, conn)
+				if err != nil {
+					return nil, err
+				}
+
+				d.Set("default_secret_name", defaultSecret)
+				d.SetId(buildId(sa.ObjectMeta))
+
+				return []*schema.ResourceData{d}, nil
+			},
+		},
+
 		// This resource is not importable because the API doesn't offer
 		// any way to differentiate between default & user-defined secret
 		// after the account was created.
@@ -253,4 +281,26 @@ func resourceKubernetesServiceAccountExists(d *schema.ResourceData, meta interfa
 		log.Printf("[DEBUG] Received error: %#v", err)
 	}
 	return true, err
+}
+
+func findDefaultServiceAccount(namespace, name string, conn *kubernetes.Clientset) (string, error) {
+	resp, err := conn.CoreV1().ServiceAccounts(namespace).Get(name, metav1.GetOptions{})
+	secretList, err := conn.CoreV1().Secrets(namespace).List(metav1.ListOptions{})
+	var svcAccTokens []api.Secret
+	for _, secret := range secretList.Items {
+		for _, svcSecret := range resp.Secrets {
+			if secret.Name != svcSecret.Name {
+				break
+			}
+			if secret.Type == api.SecretTypeServiceAccountToken {
+				svcAccTokens = append(svcAccTokens, secret)
+			}
+		}
+	}
+
+	if len(svcAccTokens) > 1 {
+		return "", fmt.Errorf("Expected 1 generated service account token, %d found: %s", len(svcAccTokens), err)
+	}
+
+	return svcAccTokens[0].Name, nil
 }
